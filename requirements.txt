@@ -1,0 +1,6 @@
+streamlit
+pandas
+PyMuPDF
+scikit-learn
+xlsxwriter
+streamlit-extras

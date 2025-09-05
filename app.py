@@ -1,11 +1,15 @@
 import fitz  # PyMuPDF
 import streamlit as st
+import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import base64
+import io
+import zipfile
+
+# --------- Helper Functions ---------
 
 
-# Extract text from PDF
+# Extract text from a single PDF
 def extract_text_from_pdf(uploaded_file):
     doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
     text = ""
@@ -14,53 +18,167 @@ def extract_text_from_pdf(uploaded_file):
     return text
 
 
-# Convert PDF to base64 for embedding
-def display_pdf(file):
-    base64_pdf = base64.b64encode(file.read()).decode("utf-8")
-    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600" type="application/pdf"></iframe>'
-    return pdf_display
+# Create downloadable CSV/Excel
+def convert_df(df, filetype="csv"):
+    if filetype == "csv":
+        return df.to_csv(index=True).encode("utf-8")
+    elif filetype == "excel":
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=True, sheet_name="Plagiarism Report")
+        return output.getvalue()
 
 
-# Streamlit App
-st.title("📄 CopyCatch - Assignment Similarity Checker")
+# --------- UI Styling ---------
+st.set_page_config(
+    page_title="CheckMyAssign - Plagiarism Checker", page_icon="📄", layout="wide"
+)
 
-original_file = st.file_uploader("Upload Original Assignment (PDF)", type=["pdf"])
-student_file = st.file_uploader("Upload Student Assignment (PDF)", type=["pdf"])
+# Custom CSS for style
+st.markdown(
+    """
+    <style>
+    .main {background-color: #181c24; color: #fff;}
+    .stButton>button {background-color: #e63946; color: white; font-weight: bold;}
+    .stDownloadButton>button {background-color: #457b9d; color: white; font-weight: bold;}
+    .stSlider > div[data-baseweb=\"slider\"] {color: #e63946;}
+    .stDataFrame {background-color: #222;}
+    </style>
+""",
+    unsafe_allow_html=True,
+)
 
-if original_file and student_file:
-    # Extract text (need fresh file handles)
-    original_file.seek(0)
-    original_text = extract_text_from_pdf(original_file)
+# Sidebar
+with st.sidebar:
+    st.image(
+        "https://cdn-icons-png.flaticon.com/512/3135/3135715.png",
+        width=120,
+    )
+    st.markdown("# 📄 CheckMyAssign")
+    st.markdown("**Batch Assignment Plagiarism Checker**")
+    st.markdown("---")
+    st.markdown(
+        "**Instructions:**\n- Upload individual PDF files or a ZIP file containing PDFs.\n- Filenames should be student IDs.\n- Adjust the plagiarism threshold as needed.\n- Download the report as CSV or Excel."
+    )
+    st.markdown("---")
+    st.info("Made with ❤️ for educators.")
 
-    student_file.seek(0)
-    student_text = extract_text_from_pdf(student_file)
+# Main Title
+st.markdown(
+    """
+<h1 style='text-align: center; color: #e63946; font-size: 2.8rem;'>📄 CheckMyAssign</h1>
+<h3 style='text-align: center; color: #fff;'>Batch Assignment Plagiarism Checker</h3>
+""",
+    unsafe_allow_html=True,
+)
 
-    # Compute similarity
-    vectorizer = TfidfVectorizer(stop_words="english")
-    tfidf_matrix = vectorizer.fit_transform([original_text, student_text])
-    similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0] * 100
+# Upload section in columns
+col1, col2 = st.columns(2)
+with col1:
+    uploaded_files = st.file_uploader(
+        "Upload student assignments (PDFs)",
+        type=["pdf"],
+        accept_multiple_files=True,
+        key="pdf_upload",
+    )
+with col2:
+    uploaded_zip = st.file_uploader(
+        "Or upload a folder as a ZIP file (containing PDFs)",
+        type=["zip"],
+        accept_multiple_files=False,
+        key="zip_upload",
+    )
 
-    # Show score
-    st.subheader("📊 Similarity Score")
-    st.write(f"Similarity: **{similarity:.2f}%**")
-
-    if similarity > 85:
-        st.error("⚠️ Highly similar! Possible copy.")
-    elif similarity > 60:
-        st.warning("⚠️ Partial similarity detected.")
+if uploaded_files or uploaded_zip:
+    all_files = list(uploaded_files) if uploaded_files else []
+    zip_pdf_files = []
+    if uploaded_zip is not None:
+        with zipfile.ZipFile(uploaded_zip) as z:
+            for name in z.namelist():
+                if name.lower().endswith(".pdf"):
+                    zip_pdf_files.append((name, z.read(name)))
+        if not all_files and not zip_pdf_files:
+            st.error("No PDF files found in the uploaded ZIP.")
+            st.stop()
+        st.success(
+            f"✅ {len(all_files) + len(zip_pdf_files)} files (including {len(zip_pdf_files)} from ZIP) uploaded successfully"
+        )
+    elif all_files:
+        st.success(f"✅ {len(all_files)} files uploaded successfully")
     else:
-        st.success("✅ Low similarity. Looks original.")
+        st.warning("Please upload PDF files or a ZIP containing PDFs.")
+        st.stop()
 
-    # Reset file pointer again to show PDFs
-    original_file.seek(0)
-    student_file.seek(0)
+    texts = []
+    student_ids = []
 
-    col1, col2 = st.columns(2)
+    # Extract text from each PDF (uploaded individually)
+    for file in all_files:
+        file.seek(0)
+        text = extract_text_from_pdf(file)
+        texts.append(text)
+        student_ids.append(file.name.replace(".pdf", ""))  # filename = student ID
 
-    with col1:
-        st.subheader("📑 Original PDF")
-        st.markdown(display_pdf(original_file), unsafe_allow_html=True)
+    # Extract text from each PDF in ZIP
+    for name, data in zip_pdf_files:
+        text = extract_text_from_pdf(io.BytesIO(data))
+        texts.append(text)
+        student_ids.append(name.replace(".pdf", ""))
 
-    with col2:
-        st.subheader("📑 Student PDF")
-        st.markdown(display_pdf(student_file), unsafe_allow_html=True)
+    # TF-IDF Vectorization
+    vectorizer = TfidfVectorizer(stop_words="english")
+    tfidf_matrix = vectorizer.fit_transform(texts)
+
+    # Cosine similarity matrix
+    similarity_matrix = cosine_similarity(tfidf_matrix)
+
+    # Convert to DataFrame with student IDs
+    df = pd.DataFrame(similarity_matrix * 100, index=student_ids, columns=student_ids)
+    # Remove self-comparison by setting diagonal to None
+    for idx in range(len(student_ids)):
+        df.iloc[idx, idx] = None
+
+    # --------- Show Results ---------
+    st.subheader("Plagiarism Percentage Matrix")
+    st.write("Values represent similarity % between assignments (student IDs).")
+
+    st.dataframe(df.style.background_gradient(cmap="Reds").format("{:.2f}"))
+
+    # High similarity pairs
+    st.subheader("Possible Plagiarized Pairs")
+    threshold = st.slider("Select plagiarism threshold (%)", 50, 100, 70)
+    reported = set()
+
+    for i in range(len(student_ids)):
+        for j in range(len(student_ids)):
+            if i == j:
+                continue  # Skip self-comparison
+            if j < i:
+                continue  # Avoid duplicate pairs (since matrix is symmetric)
+            sim = df.iloc[i, j]
+            if sim > threshold:
+                pair = (student_ids[i], student_ids[j])
+                if pair not in reported:
+                    st.write(
+                        f"📌 **{student_ids[i]}** ↔ **{student_ids[j]}** → {sim:.2f}% similar"
+                    )
+                    reported.add(pair)
+
+    # --------- Download Report ---------
+    st.subheader("📥 Download Report")
+
+    csv_data = convert_df(df, "csv")
+    st.download_button(
+        label="⬇️ Download CSV Report",
+        data=csv_data,
+        file_name="plagiarism_report.csv",
+        mime="text/csv",
+    )
+
+    excel_data = convert_df(df, "excel")
+    st.download_button(
+        label="⬇️ Download Excel Report",
+        data=excel_data,
+        file_name="plagiarism_report.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
