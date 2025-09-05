@@ -1,12 +1,11 @@
-# save as app.py
 import fitz  # PyMuPDF
 import streamlit as st
-import difflib
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+import base64
 
 
-# Function to extract text from PDF
+# Extract text from PDF
 def extract_text_from_pdf(uploaded_file):
     doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
     text = ""
@@ -15,40 +14,33 @@ def extract_text_from_pdf(uploaded_file):
     return text
 
 
-# Function to generate highlighted diff
-def get_diff_html(original, student):
-    diff = difflib.HtmlDiff()
-    return diff.make_table(
-        original.splitlines(),
-        student.splitlines(),
-        fromdesc="Original",
-        todesc="Student",
-        context=True,
-        numlines=3,
-    )
+# Convert PDF to base64 for embedding
+def display_pdf(file):
+    base64_pdf = base64.b64encode(file.read()).decode("utf-8")
+    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600" type="application/pdf"></iframe>'
+    return pdf_display
 
 
-# Streamlit UI
+# Streamlit App
 st.title("📄 CopyCatch - Assignment Similarity Checker")
-st.write(
-    "Upload the **original assignment** and a **student assignment** to check similarity."
-)
 
-# File uploads
 original_file = st.file_uploader("Upload Original Assignment (PDF)", type=["pdf"])
 student_file = st.file_uploader("Upload Student Assignment (PDF)", type=["pdf"])
 
 if original_file and student_file:
-    # Extract text
+    # Extract text (need fresh file handles)
+    original_file.seek(0)
     original_text = extract_text_from_pdf(original_file)
+
+    student_file.seek(0)
     student_text = extract_text_from_pdf(student_file)
 
-    # Vectorize text for similarity
+    # Compute similarity
     vectorizer = TfidfVectorizer(stop_words="english")
     tfidf_matrix = vectorizer.fit_transform([original_text, student_text])
     similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0] * 100
 
-    # Show result
+    # Show score
     st.subheader("📊 Similarity Score")
     st.write(f"Similarity: **{similarity:.2f}%**")
 
@@ -59,7 +51,16 @@ if original_file and student_file:
     else:
         st.success("✅ Low similarity. Looks original.")
 
-    # Show comparison
-    st.subheader("📑 Text Comparison")
-    diff_html = get_diff_html(original_text, student_text)
-    st.components.v1.html(diff_html, height=500, scrolling=True)
+    # Reset file pointer again to show PDFs
+    original_file.seek(0)
+    student_file.seek(0)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("📑 Original PDF")
+        st.markdown(display_pdf(original_file), unsafe_allow_html=True)
+
+    with col2:
+        st.subheader("📑 Student PDF")
+        st.markdown(display_pdf(student_file), unsafe_allow_html=True)
